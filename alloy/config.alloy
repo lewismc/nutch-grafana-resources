@@ -1,0 +1,1541 @@
+// Grafana Alloy configuration for Apache Nutch
+// Processes logs and extracts metrics from Hadoop counters
+// Based on metrics defined in org.apache.nutch.metrics.NutchMetrics
+// https://github.com/apache/nutch/blob/master/src/java/org/apache/nutch/metrics/NutchMetrics.java
+
+livedebugging {
+  enabled = true
+}
+
+logging {
+  level  = "info"
+  format = "logfmt"
+}
+
+// =============================================================================
+// SECRETS - Read credentials from files
+// Create these files with your credentials (no newline at end):
+//   mkdir -p ~/.config/alloy
+//   echo -n "your_loki_username" > ~/.config/alloy/loki_username
+//   echo -n "your_prometheus_username" > ~/.config/alloy/prometheus_username
+//   echo -n "your_api_key" > ~/.config/alloy/grafana_cloud_api_key
+//   chmod 600 ~/.config/alloy/grafana_cloud_api_key
+// =============================================================================
+
+local.file "loki_username" {
+  filename  = "/path/to/your/.config/alloy/loki_username"
+  is_secret = false
+}
+
+local.file "prometheus_username" {
+  filename  = "/path/to/your/.config/alloy/prometheus_username"
+  is_secret = false
+}
+
+local.file "grafana_cloud_api_key" {
+  filename  = "/path/to/your/.config/alloy/grafana_cloud_api_key"
+  is_secret = true
+}
+
+// =============================================================================
+// FILE DISCOVERY
+// =============================================================================
+
+// Discover Nutch log files
+local.file_match "nutch_logs" {
+  path_targets = [
+    {
+      "__path__" = "/path/to/nutch/runtime/local/logs/*.log",
+      "job"      = "nutch",
+      "hostname" = constants.hostname,
+    },
+  ]
+  sync_period = "5s"
+}
+
+// =============================================================================
+// LOG INGESTION
+// =============================================================================
+
+// Read log files and forward to processing pipeline
+loki.source.file "nutch_logs_scrape" {
+  targets       = local.file_match.nutch_logs.targets
+  forward_to    = [loki.process.nutch_logs_process.receiver]
+  tail_from_end = true
+}
+
+// =============================================================================
+// LOG PROCESSING PIPELINE
+// =============================================================================
+
+loki.process "nutch_logs_process" {
+  //forward_to = [loki.write.local.receiver]
+  forward_to = [loki.write.grafanacloud.receiver]
+
+  // Stage 1: Multiline handling for stack traces and Hadoop counter output
+  // Lines not starting with a timestamp are continuation lines
+  stage.multiline {
+    firstline     = "^\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2},\\d{3}"
+    max_wait_time = "3s"
+    max_lines     = 500
+  }
+
+  // Stage 2: Parse Log4j2 format: %d %p %c{1.} [%t] %m%n
+  // Example: 2025-12-11 18:00:23,194 INFO o.a.n.p.PluginManifestParser [main] Plugins: looking in: ...
+  // Note: [^\n]* instead of .* to match only first line (multiline entries have stack traces)
+  stage.regex {
+    expression = "^(?P<timestamp>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2},\\d{3}) (?P<level>\\w+) (?P<class>\\S+) \\[(?P<thread>[^\\]]+)\\] (?P<message>[^\\n]*)"
+  }
+
+  // Stage 3: Parse timestamp
+  // Nutch logs use local time - specify timezone so Alloy converts to UTC correctly
+  stage.timestamp {
+    source   = "timestamp"
+    format   = "2006-01-02 15:04:05,000"
+    location = "America/Los_Angeles"  // PST/PDT timezone
+  }
+
+  // Stage 4: Promote extracted fields to labels
+  stage.labels {
+    values = {
+      level  = "",
+      class  = "",
+      thread = "",
+    }
+  }
+
+  // Stage 5: Extract structured data from message
+  stage.static_labels {
+    values = {
+      source = "nutch",
+    }
+  }
+}
+
+// =============================================================================
+// METRICS EXTRACTION FROM HADOOP COUNTERS
+// Based on org.apache.nutch.metrics.NutchMetrics
+// =============================================================================
+
+// Separate processing pipeline for metrics extraction
+loki.process "nutch_metrics_extract" {
+  forward_to = []  // Metrics only, no log forwarding from this pipeline
+
+  // =========================================================================
+  // FETCHER METRICS (GROUP_FETCHER = "nutch_fetcher")
+  // =========================================================================
+
+  // Active fetcher threads (extracted from log messages like "activeThreads=50")
+  stage.regex {
+    expression = "activeThreads=(?P<active_threads>\\d+)"
+  }
+  stage.metrics {
+    metric.gauge {
+      name        = "nutch_fetcher_active_threads"
+      description = "Number of currently active fetcher threads"
+      source      = "active_threads"
+      action      = "set"
+    }
+  }
+
+  // Spin waiting threads (threads waiting for work)
+  stage.regex {
+    expression = "spinWaiting=(?P<spin_waiting>\\d+)"
+  }
+  stage.metrics {
+    metric.gauge {
+      name        = "nutch_fetcher_spin_waiting"
+      description = "Number of fetcher threads waiting for work (spin waiting)"
+      source      = "spin_waiting"
+      action      = "set"
+    }
+  }
+
+  // Fetch queues total size (total URLs in all queues)
+  stage.regex {
+    expression = "fetchQueues\\.totalSize=(?P<queues_total_size>\\d+)"
+  }
+  stage.metrics {
+    metric.gauge {
+      name        = "nutch_fetcher_queues_total_size"
+      description = "Total number of URLs in all fetch queues"
+      source      = "queues_total_size"
+      action      = "set"
+    }
+  }
+
+  // Fetch queues count (number of active queues)
+  stage.regex {
+    expression = "fetchQueues\\.getQueueCount=(?P<queue_count>\\d+)"
+  }
+  stage.metrics {
+    metric.gauge {
+      name        = "nutch_fetcher_queue_count"
+      description = "Number of active fetch queues"
+      source      = "queue_count"
+      action      = "set"
+    }
+  }
+
+  // Configured fetcher threads (extracted from "Fetcher: threads: 50")
+  stage.regex {
+    expression = "Fetcher: threads: (?P<configured_threads>\\d+)"
+  }
+  stage.metrics {
+    metric.gauge {
+      name        = "nutch_fetcher_configured_threads"
+      description = "Number of configured fetcher threads"
+      source      = "configured_threads"
+      action      = "set"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+bytes_downloaded_total=(?P<bytes_downloaded_total>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_fetcher_bytes_downloaded_total"
+      description = "Total bytes downloaded by fetcher"
+      source      = "bytes_downloaded_total"
+      action      = "add"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+robots_denied_total=(?P<robots_denied_total>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_fetcher_robots_denied_total"
+      description = "URLs denied by robots.txt"
+      source      = "robots_denied_total"
+      action      = "add"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+robots_denied_maxcrawldelay_total=(?P<robots_denied_maxcrawldelay>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_fetcher_robots_denied_maxcrawldelay_total"
+      description = "URLs denied due to crawl delay exceeding maximum"
+      source      = "robots_denied_maxcrawldelay"
+      action      = "add"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+robots_defer_visits_dropped_total=(?P<robots_defer_visits_dropped>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_fetcher_robots_defer_visits_dropped_total"
+      description = "URLs dropped due to robots.txt deferred visits"
+      source      = "robots_defer_visits_dropped"
+      action      = "add"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+redirect_count_exceeded_total=(?P<redirect_exceeded>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_fetcher_redirect_count_exceeded_total"
+      description = "Redirects that exceeded maximum redirect count"
+      source      = "redirect_exceeded"
+      action      = "add"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+redirect_deduplicated_total=(?P<redirect_dedup>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_fetcher_redirect_deduplicated_total"
+      description = "Redirects deduplicated (already seen)"
+      source      = "redirect_dedup"
+      action      = "add"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+redirect_not_created_total=(?P<redirect_not_created>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_fetcher_redirect_not_created_total"
+      description = "FetchItems not created for redirects"
+      source      = "redirect_not_created"
+      action      = "add"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+hit_by_timelimit_total=(?P<hit_by_timelimit>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_fetcher_hit_by_timelimit_total"
+      description = "URLs hit by time limit"
+      source      = "hit_by_timelimit"
+      action      = "add"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+hit_by_timeout_total=(?P<hit_by_timeout>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_fetcher_hit_by_timeout_total"
+      description = "URLs hit by timeout"
+      source      = "hit_by_timeout"
+      action      = "add"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+hit_by_throughput_threshold_total=(?P<hit_by_throughput>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_fetcher_hit_by_throughput_threshold_total"
+      description = "URLs hit by throughput threshold"
+      source      = "hit_by_throughput"
+      action      = "add"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+hung_threads_total=(?P<hung_threads>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_fetcher_hung_threads_total"
+      description = "Threads that hung during fetching"
+      source      = "hung_threads"
+      action      = "add"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+filtered_total=(?P<filtered_total>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_fetcher_filtered_total"
+      description = "URLs filtered during fetching"
+      source      = "filtered_total"
+      action      = "add"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+above_exception_threshold_total=(?P<above_exception_threshold>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_fetcher_above_exception_threshold_total"
+      description = "URLs dropped due to exception threshold in queue"
+      source      = "above_exception_threshold"
+      action      = "add"
+    }
+  }
+
+  // Fetcher latency metrics (from LatencyTracker)
+  stage.regex {
+    expression = "^\\s+fetch_latency_count_total=(?P<fetch_latency_count>\\d+)"
+  }
+  stage.metrics {
+    metric.gauge {
+      name        = "nutch_fetcher_latency_count_total"
+      description = "Fetch latency count total"
+      source      = "fetch_latency_count"
+      action      = "set"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+fetch_latency_sum_ms=(?P<fetch_latency_sum>\\d+)"
+  }
+  stage.metrics {
+    metric.gauge {
+      name        = "nutch_fetcher_latency_sum_ms"
+      description = "Fetch latency sum in milliseconds"
+      source      = "fetch_latency_sum"
+      action      = "set"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+fetch_latency_p50_ms=(?P<fetch_latency_p50>\\d+)"
+  }
+  stage.metrics {
+    metric.gauge {
+      name        = "nutch_fetcher_latency_p50_ms"
+      description = "Fetch latency p50 in milliseconds"
+      source      = "fetch_latency_p50"
+      action      = "set"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+fetch_latency_p95_ms=(?P<fetch_latency_p95>\\d+)"
+  }
+  stage.metrics {
+    metric.gauge {
+      name        = "nutch_fetcher_latency_p95_ms"
+      description = "Fetch latency p95 in milliseconds"
+      source      = "fetch_latency_p95"
+      action      = "set"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+fetch_latency_p99_ms=(?P<fetch_latency_p99>\\d+)"
+  }
+  stage.metrics {
+    metric.gauge {
+      name        = "nutch_fetcher_latency_p99_ms"
+      description = "Fetch latency p99 in milliseconds"
+      source      = "fetch_latency_p99"
+      action      = "set"
+    }
+  }
+
+  // HTTP status counters (moved counter)
+  stage.regex {
+    expression = "^\\s+moved=(?P<moved>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_fetcher_moved_total"
+      description = "Total URLs moved/redirected"
+      source      = "moved"
+      action      = "add"
+    }
+  }
+
+  // =========================================================================
+  // FETCHER OUTLINKS METRICS (GROUP_FETCHER_OUTLINKS = "nutch_fetcher_outlinks")
+  // =========================================================================
+
+  stage.regex {
+    expression = "^\\s+outlinks_detected_total=(?P<outlinks_detected>\\d+)"
+  }
+  stage.metrics {
+    metric.gauge {
+      name        = "nutch_fetcher_outlinks_detected_total"
+      description = "Outlinks detected during parsing"
+      source      = "outlinks_detected"
+      action      = "set"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+outlinks_following_total=(?P<outlinks_following>\\d+)"
+  }
+  stage.metrics {
+    metric.gauge {
+      name        = "nutch_fetcher_outlinks_following_total"
+      description = "Outlinks being followed"
+      source      = "outlinks_following"
+      action      = "set"
+    }
+  }
+
+  // =========================================================================
+  // GENERATOR METRICS (GROUP_GENERATOR = "nutch_generator")
+  // =========================================================================
+
+  stage.regex {
+    expression = "^\\s+url_filters_rejected_total=(?P<url_filters_rejected>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_generator_url_filters_rejected_total"
+      description = "URLs rejected by URL filters"
+      source      = "url_filters_rejected"
+      action      = "add"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+url_filter_exception_total=(?P<url_filter_exception>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_generator_url_filter_exception_total"
+      description = "URL filter exceptions"
+      source      = "url_filter_exception"
+      action      = "add"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+schedule_rejected_total=(?P<schedule_rejected>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_generator_schedule_rejected_total"
+      description = "URLs rejected by fetch schedule"
+      source      = "schedule_rejected"
+      action      = "add"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+wait_for_update_total=(?P<wait_for_update>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_generator_wait_for_update_total"
+      description = "URLs waiting for CrawlDb update"
+      source      = "wait_for_update"
+      action      = "add"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+expr_rejected_total=(?P<expr_rejected>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_generator_expr_rejected_total"
+      description = "URLs rejected by JEXL expression"
+      source      = "expr_rejected"
+      action      = "add"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+status_rejected_total=(?P<status_rejected>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_generator_status_rejected_total"
+      description = "URLs rejected due to status restriction"
+      source      = "status_rejected"
+      action      = "add"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+score_too_low_total=(?P<score_too_low>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_generator_score_too_low_total"
+      description = "URLs rejected due to score below threshold"
+      source      = "score_too_low"
+      action      = "add"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+interval_rejected_total=(?P<interval_rejected>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_generator_interval_rejected_total"
+      description = "URLs rejected due to fetch interval exceeding threshold"
+      source      = "interval_rejected"
+      action      = "add"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+malformed_url_total=(?P<malformed_url>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_generator_malformed_url_total"
+      description = "Malformed URLs encountered"
+      source      = "malformed_url"
+      action      = "add"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+urls_skipped_per_host_overflow_total=(?P<urls_skipped_overflow>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_generator_urls_skipped_per_host_overflow_total"
+      description = "URLs skipped due to per-host overflow"
+      source      = "urls_skipped_overflow"
+      action      = "add"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+hosts_affected_per_host_overflow_total=(?P<hosts_affected_overflow>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_generator_hosts_affected_per_host_overflow_total"
+      description = "Hosts affected by per-host overflow"
+      source      = "hosts_affected_overflow"
+      action      = "add"
+    }
+  }
+
+  // =========================================================================
+  // INDEXER METRICS (GROUP_INDEXER = "nutch_indexer")
+  // =========================================================================
+
+  stage.regex {
+    expression = "^\\s+deleted_robots_noindex_total=(?P<deleted_robots_noindex>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_indexer_deleted_robots_noindex_total"
+      description = "Documents deleted due to robots noindex"
+      source      = "deleted_robots_noindex"
+      action      = "add"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+deleted_gone_total=(?P<deleted_gone>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_indexer_deleted_gone_total"
+      description = "Documents deleted because they are gone"
+      source      = "deleted_gone"
+      action      = "add"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+deleted_redirects_total=(?P<deleted_redirects>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_indexer_deleted_redirects_total"
+      description = "Documents deleted due to redirects"
+      source      = "deleted_redirects"
+      action      = "add"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+deleted_duplicates_total=(?P<deleted_duplicates>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_indexer_deleted_duplicates_total"
+      description = "Documents deleted as duplicates"
+      source      = "deleted_duplicates"
+      action      = "add"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+deleted_by_indexing_filter_total=(?P<deleted_by_filter>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_indexer_deleted_by_indexing_filter_total"
+      description = "Documents deleted by indexing filter"
+      source      = "deleted_by_filter"
+      action      = "add"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+skipped_not_modified_total=(?P<skipped_not_modified>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_indexer_skipped_not_modified_total"
+      description = "Documents skipped (not modified)"
+      source      = "skipped_not_modified"
+      action      = "add"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+skipped_by_indexing_filter_total=(?P<skipped_by_filter>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_indexer_skipped_by_indexing_filter_total"
+      description = "Documents skipped by indexing filter"
+      source      = "skipped_by_filter"
+      action      = "add"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+errors_scoring_filter_total=(?P<errors_scoring>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_indexer_errors_scoring_filter_total"
+      description = "Scoring filter errors"
+      source      = "errors_scoring"
+      action      = "add"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+errors_indexing_filter_total=(?P<errors_indexing>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_indexer_errors_indexing_filter_total"
+      description = "Indexing filter errors"
+      source      = "errors_indexing"
+      action      = "add"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+indexed_total=(?P<indexed_total>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_indexer_indexed_total"
+      description = "Documents indexed (added or updated)"
+      source      = "indexed_total"
+      action      = "add"
+    }
+  }
+
+  // Indexer latency metrics (from LatencyTracker)
+  stage.regex {
+    expression = "^\\s+index_latency_count_total=(?P<index_latency_count>\\d+)"
+  }
+  stage.metrics {
+    metric.gauge {
+      name        = "nutch_indexer_latency_count_total"
+      description = "Index latency count total"
+      source      = "index_latency_count"
+      action      = "set"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+index_latency_sum_ms=(?P<index_latency_sum>\\d+)"
+  }
+  stage.metrics {
+    metric.gauge {
+      name        = "nutch_indexer_latency_sum_ms"
+      description = "Index latency sum in milliseconds"
+      source      = "index_latency_sum"
+      action      = "set"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+index_latency_p50_ms=(?P<index_latency_p50>\\d+)"
+  }
+  stage.metrics {
+    metric.gauge {
+      name        = "nutch_indexer_latency_p50_ms"
+      description = "Index latency p50 in milliseconds"
+      source      = "index_latency_p50"
+      action      = "set"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+index_latency_p95_ms=(?P<index_latency_p95>\\d+)"
+  }
+  stage.metrics {
+    metric.gauge {
+      name        = "nutch_indexer_latency_p95_ms"
+      description = "Index latency p95 in milliseconds"
+      source      = "index_latency_p95"
+      action      = "set"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+index_latency_p99_ms=(?P<index_latency_p99>\\d+)"
+  }
+  stage.metrics {
+    metric.gauge {
+      name        = "nutch_indexer_latency_p99_ms"
+      description = "Index latency p99 in milliseconds"
+      source      = "index_latency_p99"
+      action      = "set"
+    }
+  }
+
+  // =========================================================================
+  // CRAWLDB METRICS (GROUP_CRAWLDB = "nutch_crawldb")
+  // =========================================================================
+
+  stage.regex {
+    expression = "^\\s+urls_filtered_total=(?P<urls_filtered>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_crawldb_urls_filtered_total"
+      description = "URLs filtered during CrawlDb operations"
+      source      = "urls_filtered"
+      action      = "add"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+gone_records_removed_total=(?P<gone_records_removed>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_crawldb_gone_records_removed_total"
+      description = "Gone (404) records removed during CrawlDb operations"
+      source      = "gone_records_removed"
+      action      = "add"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+orphan_records_removed_total=(?P<orphan_records_removed>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_crawldb_orphan_records_removed_total"
+      description = "Orphan records removed during CrawlDb operations"
+      source      = "orphan_records_removed"
+      action      = "add"
+    }
+  }
+
+  // CrawlDb status counters (from log output)
+  stage.regex {
+    expression = "^\\s+db_fetched=(?P<db_fetched>\\d+)"
+  }
+  stage.metrics {
+    metric.gauge {
+      name        = "nutch_crawldb_fetched"
+      description = "URLs in fetched state in CrawlDB"
+      source      = "db_fetched"
+      action      = "set"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+db_unfetched=(?P<db_unfetched>\\d+)"
+  }
+  stage.metrics {
+    metric.gauge {
+      name        = "nutch_crawldb_unfetched"
+      description = "URLs in unfetched state in CrawlDB"
+      source      = "db_unfetched"
+      action      = "set"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+db_gone=(?P<db_gone>\\d+)"
+  }
+  stage.metrics {
+    metric.gauge {
+      name        = "nutch_crawldb_gone"
+      description = "URLs in gone state in CrawlDB"
+      source      = "db_gone"
+      action      = "set"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+db_redir_perm=(?P<db_redir_perm>\\d+)"
+  }
+  stage.metrics {
+    metric.gauge {
+      name        = "nutch_crawldb_redir_perm"
+      description = "URLs with permanent redirect in CrawlDB"
+      source      = "db_redir_perm"
+      action      = "set"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+db_redir_temp=(?P<db_redir_temp>\\d+)"
+  }
+  stage.metrics {
+    metric.gauge {
+      name        = "nutch_crawldb_redir_temp"
+      description = "URLs with temporary redirect in CrawlDB"
+      source      = "db_redir_temp"
+      action      = "set"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+db_notmodified=(?P<db_notmodified>\\d+)"
+  }
+  stage.metrics {
+    metric.gauge {
+      name        = "nutch_crawldb_notmodified"
+      description = "URLs not modified in CrawlDB"
+      source      = "db_notmodified"
+      action      = "set"
+    }
+  }
+
+  // =========================================================================
+  // INJECTOR METRICS (GROUP_INJECTOR = "nutch_injector")
+  // =========================================================================
+
+  stage.regex {
+    expression = "^\\s+urls_injected_total=(?P<urls_injected_total>\\d+)"
+  }
+  stage.metrics {
+    metric.gauge {
+      name        = "nutch_injector_urls_injected_total"
+      description = "Total URLs injected"
+      source      = "urls_injected_total"
+      action      = "set"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+urls_injected_unique_total=(?P<urls_injected_unique>\\d+)"
+  }
+  stage.metrics {
+    metric.gauge {
+      name        = "nutch_injector_urls_unique_total"
+      description = "Total unique URLs injected"
+      source      = "urls_injected_unique"
+      action      = "set"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+urls_merged_total=(?P<urls_merged>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_injector_urls_merged_total"
+      description = "URLs merged with existing CrawlDb entries"
+      source      = "urls_merged"
+      action      = "add"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+urls_purged_404_total=(?P<urls_purged_404>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_injector_urls_purged_404_total"
+      description = "URLs purged due to 404 status"
+      source      = "urls_purged_404"
+      action      = "add"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+urls_purged_filter_total=(?P<urls_purged_filter>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_injector_urls_purged_filter_total"
+      description = "URLs purged by filter"
+      source      = "urls_purged_filter"
+      action      = "add"
+    }
+  }
+
+  // =========================================================================
+  // HOSTDB METRICS (GROUP_HOSTDB = "nutch_hostdb")
+  // =========================================================================
+
+  stage.regex {
+    expression = "^\\s+filtered_records_total=(?P<filtered_records>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_hostdb_filtered_records_total"
+      description = "Records filtered in HostDb"
+      source      = "filtered_records"
+      action      = "add"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+total_hosts_total=(?P<total_hosts>\\d+)"
+  }
+  stage.metrics {
+    metric.gauge {
+      name        = "nutch_hostdb_total_hosts"
+      description = "Total hosts processed"
+      source      = "total_hosts"
+      action      = "set"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+skipped_not_eligible_total=(?P<skipped_not_eligible>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_hostdb_skipped_not_eligible_total"
+      description = "Hosts skipped (not eligible)"
+      source      = "skipped_not_eligible"
+      action      = "add"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+url_limit_not_reached_total=(?P<url_limit_not_reached>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_hostdb_url_limit_not_reached_total"
+      description = "Hosts where URL limit was not reached"
+      source      = "url_limit_not_reached"
+      action      = "add"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+new_known_host_total=(?P<new_known_host>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_hostdb_new_known_host_total"
+      description = "New known hosts discovered"
+      source      = "new_known_host"
+      action      = "add"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+rediscovered_host_total=(?P<rediscovered_host>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_hostdb_rediscovered_host_total"
+      description = "Rediscovered hosts"
+      source      = "rediscovered_host"
+      action      = "add"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+existing_known_host_total=(?P<existing_known_host>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_hostdb_existing_known_host_total"
+      description = "Existing known hosts"
+      source      = "existing_known_host"
+      action      = "add"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+new_unknown_host_total=(?P<new_unknown_host>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_hostdb_new_unknown_host_total"
+      description = "New unknown hosts"
+      source      = "new_unknown_host"
+      action      = "add"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+existing_unknown_host_total=(?P<existing_unknown_host>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_hostdb_existing_unknown_host_total"
+      description = "Existing unknown hosts"
+      source      = "existing_unknown_host"
+      action      = "add"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+purged_unknown_host_total=(?P<purged_unknown_host>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_hostdb_purged_unknown_host_total"
+      description = "Purged unknown hosts"
+      source      = "purged_unknown_host"
+      action      = "add"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+checked_hosts_total=(?P<checked_hosts>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_hostdb_checked_hosts_total"
+      description = "Hosts checked"
+      source      = "checked_hosts"
+      action      = "add"
+    }
+  }
+
+  // =========================================================================
+  // PARSER METRICS (GROUP_PARSER = "nutch_parser")
+  // =========================================================================
+
+  stage.regex {
+    expression = "^\\s+success=(?P<parse_success>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_parser_success_total"
+      description = "Total successful parses"
+      source      = "parse_success"
+      action      = "add"
+    }
+  }
+
+  // Parser latency metrics (from LatencyTracker)
+  stage.regex {
+    expression = "^\\s+parse_latency_count_total=(?P<parse_latency_count>\\d+)"
+  }
+  stage.metrics {
+    metric.gauge {
+      name        = "nutch_parser_latency_count_total"
+      description = "Parse latency count total"
+      source      = "parse_latency_count"
+      action      = "set"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+parse_latency_sum_ms=(?P<parse_latency_sum>\\d+)"
+  }
+  stage.metrics {
+    metric.gauge {
+      name        = "nutch_parser_latency_sum_ms"
+      description = "Parse latency sum in milliseconds"
+      source      = "parse_latency_sum"
+      action      = "set"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+parse_latency_p50_ms=(?P<parse_latency_p50>\\d+)"
+  }
+  stage.metrics {
+    metric.gauge {
+      name        = "nutch_parser_latency_p50_ms"
+      description = "Parse latency p50 in milliseconds"
+      source      = "parse_latency_p50"
+      action      = "set"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+parse_latency_p95_ms=(?P<parse_latency_p95>\\d+)"
+  }
+  stage.metrics {
+    metric.gauge {
+      name        = "nutch_parser_latency_p95_ms"
+      description = "Parse latency p95 in milliseconds"
+      source      = "parse_latency_p95"
+      action      = "set"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+parse_latency_p99_ms=(?P<parse_latency_p99>\\d+)"
+  }
+  stage.metrics {
+    metric.gauge {
+      name        = "nutch_parser_latency_p99_ms"
+      description = "Parse latency p99 in milliseconds"
+      source      = "parse_latency_p99"
+      action      = "set"
+    }
+  }
+
+  // =========================================================================
+  // DEDUPLICATION METRICS (GROUP_DEDUP = "nutch_dedup")
+  // =========================================================================
+
+  stage.regex {
+    expression = "^\\s+documents_marked_duplicate_total=(?P<docs_marked_dup>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_dedup_documents_marked_duplicate_total"
+      description = "Documents marked as duplicate"
+      source      = "docs_marked_dup"
+      action      = "add"
+    }
+  }
+
+  // =========================================================================
+  // CLEANING JOB METRICS (GROUP_CLEANING = "nutch_cleaning")
+  // =========================================================================
+
+  stage.regex {
+    expression = "^\\s+deleted_documents_total=(?P<deleted_documents>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_cleaning_deleted_documents_total"
+      description = "Documents deleted during cleaning"
+      source      = "deleted_documents"
+      action      = "add"
+    }
+  }
+
+  // =========================================================================
+  // WEBGRAPH METRICS (GROUP_WEBGRAPH = "nutch_webgraph")
+  // =========================================================================
+
+  stage.regex {
+    expression = "^\\s+added_links_total=(?P<added_links>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_webgraph_added_links_total"
+      description = "Links added to WebGraph"
+      source      = "added_links"
+      action      = "add"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+removed_links_total=(?P<removed_links>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_webgraph_removed_links_total"
+      description = "Links removed from WebGraph"
+      source      = "removed_links"
+      action      = "add"
+    }
+  }
+
+  // =========================================================================
+  // SITEMAP METRICS (GROUP_SITEMAP = "nutch_sitemap")
+  // =========================================================================
+
+  stage.regex {
+    expression = "^\\s+sitemap_seeds_total=(?P<sitemap_seeds>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_sitemap_seeds_total"
+      description = "Seeds extracted from sitemaps"
+      source      = "sitemap_seeds"
+      action      = "add"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+sitemaps_from_hostname_total=(?P<sitemaps_from_hostname>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_sitemap_from_hostname_total"
+      description = "Sitemaps discovered from hostname"
+      source      = "sitemaps_from_hostname"
+      action      = "add"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+filtered_sitemaps_from_hostname_total=(?P<filtered_sitemaps>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_sitemap_filtered_from_hostname_total"
+      description = "Sitemaps filtered from hostname"
+      source      = "filtered_sitemaps"
+      action      = "add"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+failed_fetches_total=(?P<failed_fetches>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_sitemap_failed_fetches_total"
+      description = "Failed sitemap fetches"
+      source      = "failed_fetches"
+      action      = "add"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+existing_sitemap_entries_total=(?P<existing_entries>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_sitemap_existing_entries_total"
+      description = "Existing sitemap entries"
+      source      = "existing_entries"
+      action      = "add"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+new_sitemap_entries_total=(?P<new_entries>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_sitemap_new_entries_total"
+      description = "New sitemap entries"
+      source      = "new_entries"
+      action      = "add"
+    }
+  }
+
+  // =========================================================================
+  // WARC EXPORTER METRICS (GROUP_WARC_EXPORTER = "nutch_warc_exporter")
+  // =========================================================================
+
+  stage.regex {
+    expression = "^\\s+missing_content_total=(?P<missing_content>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_warc_exporter_missing_content_total"
+      description = "Missing content in WARC export"
+      source      = "missing_content"
+      action      = "add"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+missing_metadata_total=(?P<missing_metadata>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_warc_exporter_missing_metadata_total"
+      description = "Missing metadata in WARC export"
+      source      = "missing_metadata"
+      action      = "add"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+omitted_empty_response_total=(?P<omitted_empty>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_warc_exporter_omitted_empty_response_total"
+      description = "Omitted empty responses in WARC export"
+      source      = "omitted_empty"
+      action      = "add"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+invalid_uri_total=(?P<invalid_uri>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_warc_exporter_invalid_uri_total"
+      description = "Invalid URIs in WARC export"
+      source      = "invalid_uri"
+      action      = "add"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+records_generated_total=(?P<records_generated>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_warc_exporter_records_generated_total"
+      description = "WARC records generated"
+      source      = "records_generated"
+      action      = "add"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+exception_total=(?P<warc_exception>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_warc_exporter_exception_total"
+      description = "Exceptions during WARC export"
+      source      = "warc_exception"
+      action      = "add"
+    }
+  }
+
+  // =========================================================================
+  // DOMAIN STATISTICS METRICS (GROUP_DOMAIN_STATS = "nutch_domain_stats")
+  // =========================================================================
+
+  stage.regex {
+    expression = "^\\s+fetched_total=(?P<domain_fetched>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_domain_stats_fetched_total"
+      description = "Fetched URLs in domain statistics"
+      source      = "domain_fetched"
+      action      = "add"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+not_fetched_total=(?P<domain_not_fetched>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_domain_stats_not_fetched_total"
+      description = "Not fetched URLs in domain statistics"
+      source      = "domain_not_fetched"
+      action      = "add"
+    }
+  }
+
+  stage.regex {
+    expression = "^\\s+empty_result_total=(?P<empty_result>\\d+)"
+  }
+  stage.metrics {
+    metric.counter {
+      name        = "nutch_domain_stats_empty_result_total"
+      description = "Empty results in domain statistics"
+      source      = "empty_result"
+      action      = "add"
+    }
+  }
+}
+
+// Secondary file source for metrics extraction (processes same logs)
+loki.source.file "nutch_logs_metrics" {
+  targets       = local.file_match.nutch_logs.targets
+  forward_to    = [loki.process.nutch_metrics_extract.receiver]
+  tail_from_end = true
+}
+
+// =============================================================================
+// LOKI WRITER - Send logs to Loki
+// =============================================================================
+
+//loki.write "local" {
+//  endpoint {
+//    url = "http://loki:3100/loki/api/v1/push"
+//  }
+//}
+
+loki.write "grafanacloud" {
+  endpoint {
+    url = "https://logs-prod-<INSTANCE>.grafana.net/loki/api/v1/push"
+
+    basic_auth {
+      username = local.file.loki_username.content
+      password = local.file.grafana_cloud_api_key.content
+    }
+  }
+}
+
+
+// =============================================================================
+// SCRAPE ALLOY INTERNAL METRICS (includes loki.process stage.metrics)
+// =============================================================================
+
+prometheus.exporter.self "alloy" {
+  // Exposes Alloy's internal metrics including those from stage.metrics
+}
+
+// Relabel to filter and strip prefix from Nutch metrics only
+prometheus.relabel "nutch_metrics" {
+  forward_to = [prometheus.remote_write.grafanacloud.receiver]
+
+  // Keep only Nutch metrics (those with loki_process_custom_nutch_ prefix)
+  // Drop all other Alloy internal metrics
+  rule {
+    source_labels = ["__name__"]
+    regex         = "loki_process_custom_nutch_.*"
+    action        = "keep"
+  }
+
+  // Strip the loki_process_custom_ prefix from metric names
+  rule {
+    source_labels = ["__name__"]
+    regex         = "loki_process_custom_(.*)"
+    target_label  = "__name__"
+    replacement   = "$1"
+    action        = "replace"
+  }
+}
+
+prometheus.scrape "alloy_metrics" {
+  targets         = prometheus.exporter.self.alloy.targets
+  forward_to      = [prometheus.relabel.nutch_metrics.receiver]
+  job_name        = "nutch"
+  scrape_interval = "30s"  // Reduced frequency to avoid rate limits
+}
+
+// =============================================================================
+// PROMETHEUS REMOTE WRITE - Export extracted metrics
+// =============================================================================
+
+//prometheus.remote_write "local" {
+//  endpoint {
+//    url = "http://prometheus:9090/api/v1/write"
+//  }
+//}
+
+prometheus.remote_write "grafanacloud" {
+  endpoint {
+    url = "https://prometheus-prod-<INSTANCE>-<REGION>.grafana.net/api/prom/push"
+
+    basic_auth {
+      username = local.file.prometheus_username.content
+      password = local.file.grafana_cloud_api_key.content
+    }
+
+    // Rate limiting to avoid Grafana Cloud 429 errors
+    queue_config {
+      capacity          = 2500
+      max_shards        = 10
+      min_shards        = 1
+      max_samples_per_send = 500
+      batch_send_deadline  = "5s"
+      min_backoff       = "30ms"
+      max_backoff       = "5s"
+      retry_on_http_429 = true
+    }
+  }
+}
+
+// =============================================================================
+// OPTIONAL: JMX METRICS SCRAPING
+// Uncomment if JMX exporter is configured for Nutch/Hadoop JVM
+// =============================================================================
+
+// discovery.relabel "nutch_jmx" {
+//   targets = [
+//     {
+//       "__address__" = "localhost:9100",
+//     },
+//   ]
+//
+//   rule {
+//     target_label = "instance"
+//     replacement  = constants.hostname
+//   }
+//
+//   rule {
+//     target_label = "job"
+//     replacement  = "nutch_jmx"
+//   }
+// }
+//
+// prometheus.scrape "nutch_jmx" {
+//   targets    = discovery.relabel.nutch_jmx.output
+//   forward_to = [prometheus.remote_write.local.receiver]
+//   job_name   = "nutch_jmx"
+// }

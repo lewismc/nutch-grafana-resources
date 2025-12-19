@@ -1,0 +1,115 @@
+name: Validate Dashboards
+
+on:
+  push:
+    paths:
+      - 'dashboards/*.json'
+  pull_request:
+    paths:
+      - 'dashboards/*.json'
+  workflow_dispatch:
+
+jobs:
+  validate-json:
+    name: Validate Dashboard JSON
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm install -g ajv-cli ajv-formats
+
+      - name: Validate JSON syntax
+        run: |
+          echo "Validating JSON syntax..."
+          for file in dashboards/*.json; do
+            echo "Checking $file"
+            if ! python3 -m json.tool "$file" > /dev/null 2>&1; then
+              echo "❌ Invalid JSON: $file"
+              python3 -m json.tool "$file"
+              exit 1
+            fi
+            echo "✅ Valid JSON: $file"
+          done
+
+      - name: Check required dashboard fields
+        run: |
+          echo "Checking required Grafana dashboard fields..."
+          for file in dashboards/*.json; do
+            echo "Checking $file"
+            
+            # Check for required top-level fields
+            if ! python3 -c "
+          import json
+          import sys
+
+          with open('$file') as f:
+              data = json.load(f)
+
+          required_fields = ['panels', 'title']
+          missing = [field for field in required_fields if field not in data]
+
+          if missing:
+              print(f'❌ Missing required fields: {missing}')
+              sys.exit(1)
+
+          if not isinstance(data.get('panels'), list):
+              print('❌ panels must be an array')
+              sys.exit(1)
+
+          print(f'✅ Dashboard: {data.get(\"title\", \"Untitled\")}')
+          print(f'   - {len(data[\"panels\"])} panels')
+          print(f'   - Description: {data.get(\"description\", \"None\")[:80]}')
+          "; then
+              exit 1
+            fi
+          done
+
+      - name: Validate panel structure
+        run: |
+          echo "Validating panel structure..."
+          python3 << 'EOF'
+          import json
+          import sys
+          import glob
+
+          errors = []
+
+          for filepath in glob.glob('dashboards/*.json'):
+              with open(filepath) as f:
+                  data = json.load(f)
+              
+              dashboard_title = data.get('title', filepath)
+              panels = data.get('panels', [])
+              
+              for i, panel in enumerate(panels):
+                  panel_title = panel.get('title', f'Panel {i}')
+                  panel_type = panel.get('type', 'unknown')
+                  
+                  # Row panels don't need these fields
+                  if panel_type == 'row':
+                      continue
+                  
+                  # Check for gridPos (required for positioning)
+                  if 'gridPos' not in panel:
+                      errors.append(f'{filepath}: Panel "{panel_title}" missing gridPos')
+                  
+                  # Check for type
+                  if 'type' not in panel:
+                      errors.append(f'{filepath}: Panel "{panel_title}" missing type')
+
+          if errors:
+              print('❌ Panel validation errors:')
+              for error in errors:
+                  print(f'  - {error}')
+              sys.exit(1)
+          else:
+              print('✅ All panels have valid structure')
+          EOF
+

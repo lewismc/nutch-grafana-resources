@@ -1,0 +1,110 @@
+name: Validate Alloy Config
+
+on:
+  push:
+    paths:
+      - 'alloy/*.alloy'
+  pull_request:
+    paths:
+      - 'alloy/*.alloy'
+  workflow_dispatch:
+
+jobs:
+  validate-alloy:
+    name: Validate Grafana Alloy Configuration
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Grafana Alloy
+        run: |
+          sudo mkdir -p /etc/apt/keyrings/
+          wget -q -O - https://apt.grafana.com/gpg.key | gpg --dearmor | sudo tee /etc/apt/keyrings/grafana.gpg > /dev/null
+          echo "deb [signed-by=/etc/apt/keyrings/grafana.gpg] https://apt.grafana.com stable main" | sudo tee /etc/apt/sources.list.d/grafana.list
+          sudo apt-get update
+          sudo apt-get install -y alloy
+
+      - name: Verify Alloy installation
+        run: alloy --version
+
+      - name: Check Alloy config syntax
+        run: |
+          echo "Validating Alloy configuration syntax..."
+          for file in alloy/*.alloy; do
+            echo "Checking $file"
+            if alloy fmt "$file" > /tmp/formatted.alloy 2>&1; then
+              echo "✅ Valid syntax: $file"
+            else
+              echo "❌ Invalid syntax: $file"
+              cat /tmp/formatted.alloy
+              exit 1
+            fi
+          done
+
+      - name: Check Alloy config formatting
+        run: |
+          echo "Checking Alloy configuration formatting..."
+          format_issues=0
+          for file in alloy/*.alloy; do
+            echo "Checking formatting: $file"
+            if ! diff -q "$file" <(alloy fmt "$file") > /dev/null 2>&1; then
+              echo "⚠️  Formatting differs from standard: $file"
+              echo "Run 'alloy fmt $file' to fix formatting"
+              diff "$file" <(alloy fmt "$file") || true
+              format_issues=1
+            else
+              echo "✅ Formatting OK: $file"
+            fi
+          done
+          if [ $format_issues -eq 1 ]; then
+            echo ""
+            echo "::warning::Some files have non-standard formatting. Consider running 'alloy fmt' to fix."
+          fi
+
+      - name: Validate config structure
+        run: |
+          echo "Checking for required Alloy components..."
+          python3 << 'EOF'
+          import re
+          import sys
+          import glob
+
+          for filepath in glob.glob('alloy/*.alloy'):
+              print(f"\nAnalyzing {filepath}...")
+              
+              with open(filepath) as f:
+                  content = f.read()
+              
+              # Check for common component patterns
+              components = {
+                  'loki.source': r'loki\.source\.\w+\s+"[^"]+"',
+                  'loki.write': r'loki\.write\s+"[^"]+"',
+                  'loki.process': r'loki\.process\s+"[^"]+"',
+                  'prometheus.scrape': r'prometheus\.scrape\s+"[^"]+"',
+                  'prometheus.remote_write': r'prometheus\.remote_write\s+"[^"]+"',
+                  'local.file': r'local\.file\s+"[^"]+"',
+                  'local.file_match': r'local\.file_match\s+"[^"]+"',
+              }
+              
+              found = []
+              for name, pattern in components.items():
+                  matches = re.findall(pattern, content)
+                  if matches:
+                      found.append(f"{name} ({len(matches)})")
+              
+              if found:
+                  print(f"  Components found: {', '.join(found)}")
+              else:
+                  print("  ⚠️  No standard components detected")
+              
+              # Check for placeholder paths that need configuration
+              placeholders = re.findall(r'/path/to/[^"]+', content)
+              if placeholders:
+                  print(f"  ℹ️  Placeholder paths to configure: {len(placeholders)}")
+                  for p in placeholders[:5]:  # Show first 5
+                      print(f"      - {p}")
+              
+              print(f"  ✅ Config structure validated")
+          EOF
+
