@@ -44,10 +44,10 @@ resource "grafana_rule_group" "nutch_mimir_critical" {
       }
 
       model = jsonencode({
-        expr      = "nutch_fetcher_hung_threads_total"
-        queryType = "instant"
-        refId     = "A"
-        intervalMs = 1000
+        expr          = "nutch_fetcher_hung_threads_total"
+        queryType     = "instant"
+        refId         = "A"
+        intervalMs    = 1000
         maxDataPoints = 43200
       })
     }
@@ -105,10 +105,10 @@ resource "grafana_rule_group" "nutch_mimir_critical" {
       }
 
       model = jsonencode({
-        expr      = "rate(nutch_fetcher_bytes_downloaded_total[10m])"
-        queryType = "instant"
-        refId     = "A"
-        intervalMs = 1000
+        expr          = "rate(nutch_fetcher_bytes_downloaded_total[10m])"
+        queryType     = "instant"
+        refId         = "A"
+        intervalMs    = 1000
         maxDataPoints = 43200
       })
     }
@@ -166,10 +166,10 @@ resource "grafana_rule_group" "nutch_mimir_critical" {
       }
 
       model = jsonencode({
-        expr      = "rate(nutch_fetcher_above_exception_threshold_total[5m])"
-        queryType = "instant"
-        refId     = "A"
-        intervalMs = 1000
+        expr          = "rate(nutch_fetcher_above_exception_threshold_total[5m])"
+        queryType     = "instant"
+        refId         = "A"
+        intervalMs    = 1000
         maxDataPoints = 43200
       })
     }
@@ -236,10 +236,10 @@ resource "grafana_rule_group" "nutch_mimir_warning" {
       }
 
       model = jsonencode({
-        expr      = "rate(nutch_fetcher_robots_denied_total[5m]) * 60"
-        queryType = "instant"
-        refId     = "A"
-        intervalMs = 1000
+        expr          = "rate(nutch_fetcher_robots_denied_total[5m]) * 60"
+        queryType     = "instant"
+        refId         = "A"
+        intervalMs    = 1000
         maxDataPoints = 43200
       })
     }
@@ -297,10 +297,10 @@ resource "grafana_rule_group" "nutch_mimir_warning" {
       }
 
       model = jsonencode({
-        expr      = "rate(nutch_fetcher_hit_by_timeout_total[5m]) * 60"
-        queryType = "instant"
-        refId     = "A"
-        intervalMs = 1000
+        expr          = "rate(nutch_fetcher_hit_by_timeout_total[5m]) * 60"
+        queryType     = "instant"
+        refId         = "A"
+        intervalMs    = 1000
         maxDataPoints = 43200
       })
     }
@@ -358,10 +358,10 @@ resource "grafana_rule_group" "nutch_mimir_warning" {
       }
 
       model = jsonencode({
-        expr      = "nutch_fetcher_latency_p99_ms"
-        queryType = "instant"
-        refId     = "A"
-        intervalMs = 1000
+        expr          = "nutch_fetcher_latency_p99_ms"
+        queryType     = "instant"
+        refId         = "A"
+        intervalMs    = 1000
         maxDataPoints = 43200
       })
     }
@@ -419,10 +419,10 @@ resource "grafana_rule_group" "nutch_mimir_warning" {
       }
 
       model = jsonencode({
-        expr      = "nutch_fetcher_queues_total_size"
-        queryType = "instant"
-        refId     = "A"
-        intervalMs = 1000
+        expr          = "nutch_fetcher_queues_total_size"
+        queryType     = "instant"
+        refId         = "A"
+        intervalMs    = 1000
         maxDataPoints = 43200
       })
     }
@@ -489,10 +489,10 @@ resource "grafana_rule_group" "nutch_mimir_info" {
       }
 
       model = jsonencode({
-        expr      = "rate(nutch_dedup_documents_marked_duplicate_total[5m]) * 60"
-        queryType = "instant"
-        refId     = "A"
-        intervalMs = 1000
+        expr          = "rate(nutch_dedup_documents_marked_duplicate_total[5m]) * 60"
+        queryType     = "instant"
+        refId         = "A"
+        intervalMs    = 1000
         maxDataPoints = 43200
       })
     }
@@ -550,10 +550,10 @@ resource "grafana_rule_group" "nutch_mimir_info" {
       }
 
       model = jsonencode({
-        expr      = "rate(nutch_generator_schedule_rejected_total[5m]) * 60"
-        queryType = "instant"
-        refId     = "A"
-        intervalMs = 1000
+        expr          = "rate(nutch_generator_schedule_rejected_total[5m]) * 60"
+        queryType     = "instant"
+        refId         = "A"
+        intervalMs    = 1000
         maxDataPoints = 43200
       })
     }

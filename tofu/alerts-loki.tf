@@ -43,10 +43,10 @@ resource "grafana_rule_group" "nutch_loki_critical" {
       }
 
       model = jsonencode({
-        expr         = "sum(count_over_time({job=\"nutch\", class=~\".*FetcherThread.*\"} [5m]))"
-        queryType    = "instant"
-        refId        = "A"
-        intervalMs   = 1000
+        expr          = "sum(count_over_time({job=\"nutch\", class=~\".*FetcherThread.*\"} [5m]))"
+        queryType     = "instant"
+        refId         = "A"
+        intervalMs    = 1000
         maxDataPoints = 43200
       })
     }
@@ -107,10 +107,10 @@ resource "grafana_rule_group" "nutch_loki_critical" {
       }
 
       model = jsonencode({
-        expr         = "sum(count_over_time({job=\"nutch\", level=\"ERROR\"} [5m]))"
-        queryType    = "instant"
-        refId        = "A"
-        intervalMs   = 1000
+        expr          = "sum(count_over_time({job=\"nutch\", level=\"ERROR\"} [5m]))"
+        queryType     = "instant"
+        refId         = "A"
+        intervalMs    = 1000
         maxDataPoints = 43200
       })
     }
@@ -179,10 +179,10 @@ resource "grafana_rule_group" "nutch_loki_warning" {
       }
 
       model = jsonencode({
-        expr         = "sum(count_over_time({job=\"nutch\", level=\"ERROR\"} [1m]))"
-        queryType    = "instant"
-        refId        = "A"
-        intervalMs   = 1000
+        expr          = "sum(count_over_time({job=\"nutch\", level=\"ERROR\"} [1m]))"
+        queryType     = "instant"
+        refId         = "A"
+        intervalMs    = 1000
         maxDataPoints = 43200
       })
     }
@@ -241,10 +241,10 @@ resource "grafana_rule_group" "nutch_loki_warning" {
       }
 
       model = jsonencode({
-        expr         = "sum(count_over_time({job=\"nutch\"} [5m]))"
-        queryType    = "instant"
-        refId        = "A"
-        intervalMs   = 1000
+        expr          = "sum(count_over_time({job=\"nutch\"} [5m]))"
+        queryType     = "instant"
+        refId         = "A"
+        intervalMs    = 1000
         maxDataPoints = 43200
       })
     }
@@ -303,10 +303,10 @@ resource "grafana_rule_group" "nutch_loki_warning" {
       }
 
       model = jsonencode({
-        expr         = "sum(count_over_time({job=\"nutch\", level=\"WARN\"} [5m]))"
-        queryType    = "instant"
-        refId        = "A"
-        intervalMs   = 1000
+        expr          = "sum(count_over_time({job=\"nutch\", level=\"WARN\"} [5m]))"
+        queryType     = "instant"
+        refId         = "A"
+        intervalMs    = 1000
         maxDataPoints = 43200
       })
     }
@@ -365,10 +365,10 @@ resource "grafana_rule_group" "nutch_loki_warning" {
       }
 
       model = jsonencode({
-        expr         = "sum(count_over_time({job=\"nutch\"} |~ \"(?i)(OutOfMemoryError|heap space|GC overhead limit)\" [5m]))"
-        queryType    = "instant"
-        refId        = "A"
-        intervalMs   = 1000
+        expr          = "sum(count_over_time({job=\"nutch\"} |~ \"(?i)(OutOfMemoryError|heap space|GC overhead limit)\" [5m]))"
+        queryType     = "instant"
+        refId         = "A"
+        intervalMs    = 1000
         maxDataPoints = 43200
       })
     }
@@ -436,10 +436,10 @@ resource "grafana_rule_group" "nutch_loki_info" {
       }
 
       model = jsonencode({
-        expr         = "sum(count_over_time({job=\"nutch\"} |= \"Fetcher: starting\" [1m]))"
-        queryType    = "instant"
-        refId        = "A"
-        intervalMs   = 1000
+        expr          = "sum(count_over_time({job=\"nutch\"} |= \"Fetcher: starting\" [1m]))"
+        queryType     = "instant"
+        refId         = "A"
+        intervalMs    = 1000
         maxDataPoints = 43200
       })
     }
@@ -498,10 +498,10 @@ resource "grafana_rule_group" "nutch_loki_info" {
       }
 
       model = jsonencode({
-        expr         = "sum(count_over_time({job=\"nutch\"} |= \"Fetcher: finished\" [1m]))"
-        queryType    = "instant"
-        refId        = "A"
-        intervalMs   = 1000
+        expr          = "sum(count_over_time({job=\"nutch\"} |= \"Fetcher: finished\" [1m]))"
+        queryType     = "instant"
+        refId         = "A"
+        intervalMs    = 1000
         maxDataPoints = 43200
       })
     }
@@ -560,10 +560,10 @@ resource "grafana_rule_group" "nutch_loki_info" {
       }
 
       model = jsonencode({
-        expr         = "sum(count_over_time({job=\"nutch\"} |= \"IndexingJob: finished\" [1m]))"
-        queryType    = "instant"
-        refId        = "A"
-        intervalMs   = 1000
+        expr          = "sum(count_over_time({job=\"nutch\"} |= \"IndexingJob: finished\" [1m]))"
+        queryType     = "instant"
+        refId         = "A"
+        intervalMs    = 1000
         maxDataPoints = 43200
       })
     }
