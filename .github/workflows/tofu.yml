@@ -7,12 +7,10 @@ on:
     paths:
       - 'tofu/**'
       - 'dashboards/*.json'
-      - 'alerts/*.yaml'
   pull_request:
     paths:
       - 'tofu/**'
       - 'dashboards/*.json'
-      - 'alerts/*.yaml'
   workflow_dispatch:
 
 env:
