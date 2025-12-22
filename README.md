@@ -1,6 +1,6 @@
 # nutch-grafana-resources
 
-Grafana Dashboards, Alerts, and Collector resources for monitoring [Apache Nutch](https://nutch.apache.org/) web crawler.
+Grafana Dashboards, Alerts, Collector resources and Infrastructure as Code for monitoring [Apache Nutch](https://nutch.apache.org/).
 
 ## Overview
 
