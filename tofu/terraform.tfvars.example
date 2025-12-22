@@ -1,0 +1,45 @@
+# Example OpenTofu Variables for Apache Nutch Grafana Resources
+# Copy this file to terraform.tfvars and update with your values
+#
+# Usage:
+#   cp terraform.tfvars.example terraform.tfvars
+#   # Edit terraform.tfvars with your Grafana credentials
+#   tofu init
+#   tofu plan
+#   tofu apply
+
+# =============================================================================
+# REQUIRED: Grafana Connection
+# =============================================================================
+
+# Grafana instance URL
+# For Grafana Cloud: https://<your-stack>.grafana.net
+# For self-hosted: http://localhost:3000
+grafana_url = "https://your-stack.grafana.net"
+
+# Grafana API key or service account token
+# Create at: Grafana > Administration > Service accounts > Add token
+# Required permissions: folders:write, dashboards:write, alert.rules:write
+grafana_auth = "glsa_xxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+
+# =============================================================================
+# OPTIONAL: Folder
+# =============================================================================
+# Note: org_id is NOT supported when using API keys (they are org-scoped).
+# Only use org_id with basic auth (username:password).
+
+# Integration folder title (for dashboards and alerts)
+# folder_title = "Integration - Apache Nutch"
+
+# =============================================================================
+# OPTIONAL: Datasource UIDs
+# =============================================================================
+
+# Loki datasource UID for log-based alerts
+# Find at: Grafana > Connections > Data sources > Loki > Settings (UID in URL)
+# loki_datasource_uid = "grafanacloud-logs"
+
+# Prometheus/Mimir datasource UID for metric-based alerts
+# Find at: Grafana > Connections > Data sources > Prometheus > Settings (UID in URL)
+# prometheus_datasource_uid = "grafanacloud-prom"
+

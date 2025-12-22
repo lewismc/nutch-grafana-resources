@@ -1,12 +1,27 @@
 # nutch-grafana-resources
 
-Grafana Dashboards and Alloy Collector resources for monitoring [Apache Nutch](https://nutch.apache.org/) web crawler.
+Grafana Dashboards, Alerts, and Collector resources for monitoring [Apache Nutch](https://nutch.apache.org/) web crawler.
 
 ## Overview
 
 This repository provides ready-to-use Grafana resources for observing Apache Nutch crawl jobs, including:
 - **Grafana Alloy configuration** for collecting logs and extracting metrics
 - **Grafana dashboards** for visualizing crawler performance and activity
+- **OpenTofu configuration** for infrastructure-as-code deployment of dashboards and alert rules
+
+## Requirements
+
+- [Apache Nutch](https://nutch.apache.org/) (with metrics logging enabled)
+- [Grafana Alloy](https://grafana.com/docs/alloy/) for log/metrics collection
+- [Grafana](https://grafana.com/) with Loki and Prometheus datasources
+- [OpenTofu](https://opentofu.org/) >= 1.6.0 (optional, for IaC deployment)
+
+## Required Grafana Permissions
+
+Create a service account token with the following permissions:
+- `folders:write`
+- `dashboards:write`
+- `alert.rules:write`
 
 ## Resources
 
@@ -122,11 +137,89 @@ Pre-built Grafana dashboards for monitoring Nutch crawls.
 
 See [Import dashboards](https://grafana.com/docs/grafana-cloud/visualizations/dashboards/build-dashboards/import-dashboards/) in the Grafana documentation.
 
-## Requirements
+### `tofu/`
 
-- [Apache Nutch](https://nutch.apache.org/) (with metrics logging enabled)
-- [Grafana Alloy](https://grafana.com/docs/alloy/) for log/metrics collection
-- [Grafana](https://grafana.com/) with Loki and Prometheus datasources
+[OpenTofu](https://opentofu.org/) configuration for infrastructure-as-code deployment using the [Grafana Terraform Provider](https://registry.terraform.io/providers/grafana/grafana/latest/docs).
+
+#### Features
+
+- Declarative provisioning of dashboards and alert rules
+- Version-controlled infrastructure changes
+- CI/CD integration via GitHub Actions
+- Support for [Grafana Cloud](https://grafana.com/products/cloud/) and self-hosted instances
+
+#### Alert Rules
+
+The OpenTofu configuration deploys the following Grafana Alerting rules:
+
+**Loki (Log-based) Alerts:**
+- **Critical**: Crawler stopped, high error rate
+- **Warning**: Error spike, no activity, high warn rate, OOM detection
+- **Info**: Job started/finished, indexing completed
+
+**Mimir (Metric-based) Alerts:**
+- **Critical**: Hung threads, zero throughput, high exception rate
+- **Warning**: Robots denied, timeouts, high latency, queue backlog
+- **Info**: High duplicate rate, generator rejections
+
+#### Setup
+
+1. Install [OpenTofu](https://opentofu.org/docs/intro/install/):
+   ```bash
+   # macOS
+   brew install opentofu
+
+   # Linux
+   curl -fsSL https://get.opentofu.org/install-opentofu.sh | sh
+   ```
+
+2. Configure credentials:
+   ```bash
+   cd tofu
+   cp terraform.tfvars.example terraform.tfvars
+   # Edit terraform.tfvars with your Grafana URL and API token
+   ```
+
+3. Deploy resources:
+   ```bash
+   tofu init
+   tofu plan
+   tofu apply
+   ```
+
+#### Destroying Resources
+
+To remove all Grafana resources (folder, dashboards, and alert rules):
+
+```bash
+cd tofu
+tofu destroy
+```
+
+Additional destroy commands:
+
+```bash
+# Preview what will be destroyed (dry run)
+tofu plan -destroy
+
+# Destroy without confirmation prompt
+tofu destroy -auto-approve
+
+# Destroy specific resources only
+tofu destroy -target=grafana_dashboard.nutch_metrics
+tofu destroy -target=grafana_rule_group.nutch_loki_critical
+```
+
+#### CI/CD Integration
+
+The repository includes a GitHub Actions workflow (`.github/workflows/tofu.yml`) that:
+- **Validates** configuration on all pull requests
+- **Plans** changes and comments on PRs
+- **Applies** changes when merged to main
+
+Required GitHub secrets:
+- `GRAFANA_URL` — Your Grafana instance URL
+- `GRAFANA_AUTH` — Service account token
 
 ## License
 

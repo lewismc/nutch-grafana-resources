@@ -895,7 +895,7 @@
   "preload": false,
   "schemaVersion": 42,
   "tags": [
-    "nutch"
+    "apache-nutch-integration"
   ],
   "templating": {
     "list": []
