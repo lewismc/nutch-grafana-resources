@@ -1,5 +1,7 @@
 # nutch-grafana-resources
 
+![Nutchbot Grot](dashboards/nutchbot_grot.png)
+
 Grafana Dashboards, Alerts, and Collector resources for monitoring [Apache Nutch](https://nutch.apache.org/) web crawler.
 
 ## Overview
