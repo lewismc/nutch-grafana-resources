@@ -41,16 +41,17 @@ local.file "grafana_cloud_api_key" {
 // FILE DISCOVERY
 // =============================================================================
 
-// Discover Nutch log files
-local.file_match "nutch_logs" {
-  path_targets = [
-    {
-      "__path__" = "/path/to/nutch/runtime/local/logs/*.log",
-      "job"      = "nutch",
-      "hostname" = constants.hostname,
-    },
-  ]
-  sync_period = "5s"
+// Shared target configuration for Nutch log files
+declare "nutch_log_targets" {
+  export "targets" {
+    value = [
+      {
+        "__path__" = "/path/to/nutch/runtime/local/logs/*.log",
+        "job"      = "nutch",
+        "hostname" = constants.hostname,
+      },
+    ]
+  }
 }
 
 // =============================================================================
@@ -59,9 +60,13 @@ local.file_match "nutch_logs" {
 
 // Read log files and forward to processing pipeline
 loki.source.file "nutch_logs_scrape" {
-  targets       = local.file_match.nutch_logs.targets
+  targets       = nutch_log_targets.targets
   forward_to    = [loki.process.nutch_logs_process.receiver]
   tail_from_end = true
+  file_match {
+    enabled     = true
+    sync_period = "5s"
+  }
 }
 
 // =============================================================================
@@ -1414,9 +1419,13 @@ loki.process "nutch_metrics_extract" {
 
 // Secondary file source for metrics extraction (processes same logs)
 loki.source.file "nutch_logs_metrics" {
-  targets       = local.file_match.nutch_logs.targets
+  targets       = nutch_log_targets.targets
   forward_to    = [loki.process.nutch_metrics_extract.receiver]
   tail_from_end = true
+  file_match {
+    enabled     = true
+    sync_period = "5s"
+  }
 }
 
 // =============================================================================
