@@ -77,17 +77,21 @@ The configuration extracts metrics from the following Nutch components (based on
    }
    ```
 
-   **Nutch logs path** — Update `local.file_match` to point to your Nutch logs directory:
+   **Nutch logs path** — Update the `declare "nutch_log_targets"` block to point to your Nutch logs directory:
    ```alloy
-   local.file_match "nutch_logs" {
-     path_targets = [
-       {
-         "__path__" = "/home/youruser/nutch/runtime/local/logs/*.log",
-         ...
-       },
-     ]
+   declare "nutch_log_targets" {
+     export "targets" {
+       value = [
+         {
+           "__path__" = "/home/youruser/nutch/runtime/local/logs/*.log",
+           "job"      = "nutch",
+           "hostname" = constants.hostname,
+         },
+       ]
+     }
    }
    ```
+   This target configuration is shared by both `loki.source.file` components, which use the built-in `file_match` block for automatic file discovery.
 
    **[Grafana Cloud](https://grafana.com/products/cloud/) URLs** — Update `loki.write` and `prometheus.remote_write` with your instance details (found in your Grafana Cloud portal):
    ```alloy
