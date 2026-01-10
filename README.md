@@ -7,9 +7,76 @@ Grafana Dashboards, Alerts, Collector resources and Infrastructure as Code for m
 ## Overview
 
 This repository provides ready-to-use Grafana resources for observing Apache Nutch crawl jobs, including:
+- **Docker Compose stack** for quick local deployment of the complete monitoring stack
 - **Grafana Alloy configuration** for collecting logs and extracting metrics
 - **Grafana dashboards** for visualizing crawler performance and activity
 - **OpenTofu configuration** for infrastructure-as-code deployment of dashboards and alert rules
+
+## Quick Start with Docker
+
+The fastest way to get started is using Docker Compose, which deploys Grafana, Alloy, Loki, and Prometheus in a single command.
+
+### Prerequisites
+
+- [Docker](https://docs.docker.com/get-docker/) and [Docker Compose](https://docs.docker.com/compose/install/)
+- Apache Nutch with logs directory
+
+### Local Deployment
+
+1. **Configure environment:**
+   ```bash
+   cp .env.example .env
+   # Edit .env and set NUTCH_LOGS_PATH to your Nutch logs directory
+   # Example: NUTCH_LOGS_PATH=/opt/nutch/runtime/local/logs
+   ```
+
+2. **Start the stack:**
+   ```bash
+   docker compose --profile local up -d
+   ```
+
+3. **Access services:**
+   - **Grafana**: http://localhost:3000 (admin/admin)
+   - **Alloy UI**: http://localhost:12345
+   - **Prometheus**: http://localhost:9090
+   - **Loki**: http://localhost:3100
+
+4. **Provision dashboards** (via OpenTofu):
+   ```bash
+   cd tofu
+   cp terraform.tfvars.example terraform.tfvars
+   # Edit terraform.tfvars: grafana_url = "http://localhost:3000", grafana_auth = "admin:admin"
+   tofu init && tofu apply
+   ```
+
+### Grafana Cloud Deployment
+
+To send data to [Grafana Cloud](https://grafana.com/products/cloud/) instead of local services:
+
+1. **Configure environment:**
+   ```bash
+   cp .env.example .env
+   # Edit .env with your Grafana Cloud credentials:
+   # DEPLOYMENT_MODE=cloud
+   # LOKI_URL=https://logs-prod-xxx.grafana.net
+   # LOKI_USERNAME=<your-loki-username>
+   # PROMETHEUS_URL=https://prometheus-prod-xxx.grafana.net
+   # PROMETHEUS_USERNAME=<your-prometheus-username>
+   # GRAFANA_CLOUD_API_KEY=glc_xxx
+   ```
+
+2. **Start the stack** (without local profile):
+   ```bash
+   docker compose up -d
+   ```
+
+For more details, see the [Docker README](docker/README.md).
+
+---
+
+## Manual Setup
+
+If you prefer to run components individually or integrate with existing infrastructure, follow the manual setup instructions below.
 
 ## Requirements
 
@@ -17,6 +84,7 @@ This repository provides ready-to-use Grafana resources for observing Apache Nut
 - [Grafana Alloy](https://grafana.com/docs/alloy/) for log/metrics collection
 - [Grafana](https://grafana.com/) with Loki and Prometheus datasources
 - [OpenTofu](https://opentofu.org/) >= 1.6.0 (optional, for IaC deployment)
+- [Docker](https://docs.docker.com/get-docker/) (optional, for containerized deployment)
 
 ## Required Grafana Permissions
 
@@ -142,6 +210,41 @@ Pre-built Grafana dashboards for monitoring Nutch crawls.
 #### Importing Dashboards
 
 See [Import dashboards](https://grafana.com/docs/grafana-cloud/visualizations/dashboards/build-dashboards/import-dashboards/) in the Grafana documentation.
+
+### `docker/`
+
+Docker Compose configuration for deploying the complete monitoring stack:
+
+```
+docker/
+├── grafana/
+│   └── provisioning/
+│       ├── dashboards/
+│       │   └── dashboards.yaml      # Dashboard provisioning config
+│       └── datasources/
+│           └── datasources.yaml     # Loki & Prometheus datasources
+├── loki/
+│   └── loki-config.yaml             # Loki configuration
+├── prometheus/
+│   └── prometheus.yml               # Prometheus configuration
+└── README.md                        # Detailed Docker documentation
+```
+
+The stack supports two deployment modes:
+
+| Mode | Command | Services |
+|------|---------|----------|
+| **Local** | `docker compose --profile local up -d` | Grafana, Alloy, Loki, Prometheus |
+| **Cloud** | `docker compose up -d` | Grafana, Alloy (sends to Grafana Cloud) |
+
+See [docker/README.md](docker/README.md) for complete documentation.
+
+#### Troubleshooting
+
+**macOS file watching**: On macOS, Docker volume mounts may not immediately detect file changes. If logs aren't appearing, restart Alloy:
+```bash
+docker compose --profile local restart alloy
+```
 
 ### `tofu/`
 
