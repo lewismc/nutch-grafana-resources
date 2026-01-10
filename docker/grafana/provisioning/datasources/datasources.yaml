@@ -1,0 +1,35 @@
+# Grafana Datasource Provisioning for Apache Nutch Monitoring Stack
+# Auto-provisions Loki and Prometheus datasources on startup
+# https://grafana.com/docs/grafana/latest/administration/provisioning/#data-sources
+
+apiVersion: 1
+
+# Delete datasources that are no longer in config
+deleteDatasources: []
+
+datasources:
+  # Loki - Log Aggregation
+  # UID matches Grafana Cloud default for dashboard compatibility
+  - name: Loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    uid: grafanacloud-logs
+    isDefault: false
+    editable: true
+    jsonData:
+      maxLines: 1000
+      timeout: 60
+
+  # Prometheus - Metrics Storage
+  # UID matches Grafana Cloud default for dashboard compatibility
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    uid: grafanacloud-prom
+    isDefault: true
+    editable: true
+    jsonData:
+      httpMethod: POST
+      timeInterval: "15s"

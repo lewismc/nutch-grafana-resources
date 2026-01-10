@@ -1,2 +1,20 @@
-tofu/terraform.tfvars
+# Environment files
+.env
+
+# Terraform/OpenTofu state files (contain sensitive data)
+*.tfstate
+*.tfstate.*
+
+# Terraform/OpenTofu local directories
 tofu/.terraform
+.terraform/
+.terraform.lock.hcl
+
+# Sensitive variable files (keep example for reference)
+tofu/terraform.tfvars
+*.tfvars
+!*.tfvars.example
+
+# Crash log files
+crash.log
+crash.*.log

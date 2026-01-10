@@ -1,0 +1,46 @@
+# Prometheus Configuration for Apache Nutch Monitoring Stack
+# Minimal configuration with remote write receiver enabled
+# https://prometheus.io/docs/prometheus/latest/configuration/configuration/
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  # Attach these labels to any time series or alerts when communicating with
+  # external systems (federation, remote storage, Alertmanager).
+  external_labels:
+    monitor: 'nutch-monitor'
+
+# Alertmanager configuration (optional)
+# alerting:
+#   alertmanagers:
+#     - static_configs:
+#         - targets:
+#           - alertmanager:9093
+
+# Rule files (optional)
+# rule_files:
+#   - "first_rules.yml"
+#   - "second_rules.yml"
+
+# Scrape configurations
+scrape_configs:
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Alloy metrics endpoint
+  - job_name: 'alloy'
+    static_configs:
+      - targets: ['alloy:12345']
+    metrics_path: /metrics
+
+  # Grafana metrics (optional)
+  - job_name: 'grafana'
+    static_configs:
+      - targets: ['grafana:3000']
+    metrics_path: /metrics
+
+# Remote write receiver is enabled via command line flag:
+# --web.enable-remote-write-receiver
+# This allows Alloy to push metrics directly to Prometheus
