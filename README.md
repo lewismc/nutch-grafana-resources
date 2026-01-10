@@ -1,5 +1,8 @@
 # nutch-grafana-resources
 
+[![OpenTofu](https://github.com/lewismc/nutch-grafana-resources/actions/workflows/tofu.yml/badge.svg)](https://github.com/lewismc/nutch-grafana-resources/actions/workflows/tofu.yml)
+[![Validate Alloy Config](https://github.com/lewismc/nutch-grafana-resources/actions/workflows/validate-alloy.yml/badge.svg)](https://github.com/lewismc/nutch-grafana-resources/actions/workflows/validate-alloy.yml)
+
 ![Nutchbot Grot](dashboards/nutchbot_grot.png)
 
 Grafana Dashboards, Alerts, Collector resources and Infrastructure as Code for monitoring [Apache Nutch](https://nutch.apache.org/).
